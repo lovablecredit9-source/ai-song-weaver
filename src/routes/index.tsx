@@ -81,6 +81,7 @@ function Index() {
   const [step, setStep] = useState(0);
   const [showConfig, setShowConfig] = useState(false);
   const [history, setHistory] = useState<Song[]>(readHistory);
+  const [result, setResult] = useState<AnalysisResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const steps = ["File diterima", "Memeriksa format audio", "Menganalisis audio", "Mendeteksi vokal", "Mendeteksi lirik", "Mendeteksi nada dasar", "Menganalisis melodi", "Menghasilkan not angka", "Memvalidasi hasil", "Selesai"];

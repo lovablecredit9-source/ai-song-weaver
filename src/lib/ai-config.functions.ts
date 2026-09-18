@@ -64,7 +64,7 @@ export const getAiConfig = createServerFn({ method: "GET" }).handler(async (): P
   }
 
   try {
-    const response = await supabaseRequest("ai_router_config?select=base_url,model,models,allowed_models,updated_at&id=eq.1&limit=1");
+    const response = await supabaseRequest("ai_router_config?select=base_url,model,allowed_models,updated_at&id=eq.1&limit=1");
     const rows = (await response.json()) as Array<{
       base_url?: string;
       model?: string;
@@ -119,7 +119,6 @@ export const saveAiConfig = createServerFn({ method: "POST" })
         base_url: baseUrl,
         api_key: apiKey,
         model,
-        models,
         allowed_models: models,
         updated_at: new Date().toISOString(),
       }),

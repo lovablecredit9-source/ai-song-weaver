@@ -7,6 +7,22 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getAiConfig, loadRouterModels, saveAiConfig, testOnlineStorage } from "../lib/ai-config.functions";
+import { analyzeAudio } from "../lib/audio-analysis";
+import { refineNotation } from "../lib/song-ai.functions";
+
+type AnalysisResult = {
+  fileName: string;
+  duration: number;
+  bpm: number;
+  key: string;
+  timeSignature: string;
+  rangeLow: string;
+  rangeHigh: string;
+  confidence: number;
+  sections: { section: string; notation: string; confidence: number }[];
+  warnings: string[];
+  aiUsed: boolean;
+};
 
 export const Route = createFileRoute("/")({ component: Index });
 
@@ -65,6 +81,7 @@ function Index() {
   const [step, setStep] = useState(0);
   const [showConfig, setShowConfig] = useState(false);
   const [history, setHistory] = useState<Song[]>(readHistory);
+  const [result, setResult] = useState<AnalysisResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const steps = ["File diterima", "Memeriksa format audio", "Menganalisis audio", "Mendeteksi vokal", "Mendeteksi lirik", "Mendeteksi nada dasar", "Menganalisis melodi", "Menghasilkan not angka", "Memvalidasi hasil", "Selesai"];
@@ -105,31 +122,72 @@ function Index() {
 
   async function analyze() {
     if (!file) return;
-    if (!config.configured) {
-      setShowConfig(true);
-      toast.error("Konfigurasi AI belum tersedia.");
-      return;
-    }
+    setResult(null);
     setAnalyzing(true);
-    for (let i = 0; i < steps.length; i++) {
-      setStep(i);
-      setProgress(Math.round((i / (steps.length - 1)) * 100));
-      await new Promise((resolve) => setTimeout(resolve, i === 2 || i === 6 ? 900 : 450));
+    setStep(0);
+    setProgress(0);
+    try {
+      const analysis = await analyzeAudio(file, (index) => {
+        setStep(index);
+        setProgress(Math.round((index / (steps.length - 1)) * 100));
+      });
+
+      setStep(7);
+      setProgress(80);
+      const refined = await refineNotation({
+        data: {
+          fileName: file.name,
+          duration: analysis.duration,
+          bpm: analysis.bpm,
+          key: analysis.key,
+          timeSignature: analysis.timeSignature,
+          rangeLow: analysis.rangeLow,
+          rangeHigh: analysis.rangeHigh,
+          confidence: analysis.confidence,
+          sections: analysis.sections.slice(0, 24).map((s) => ({
+            section: s.section,
+            notation: s.notation,
+            confidence: s.confidence,
+          })),
+        },
+      });
+
+      setStep(8);
+      setProgress(95);
+      const finalResult: AnalysisResult = {
+        fileName: file.name,
+        duration: analysis.duration,
+        bpm: analysis.bpm,
+        key: analysis.key,
+        timeSignature: analysis.timeSignature,
+        rangeLow: analysis.rangeLow,
+        rangeHigh: analysis.rangeHigh,
+        confidence: analysis.confidence,
+        sections: refined.number_notation,
+        warnings: [...analysis.warnings, ...refined.warnings],
+        aiUsed: refined.aiUsed,
+      };
+      setResult(finalResult);
+
+      const song: Song = {
+        id: crypto.randomUUID(),
+        name: file.name,
+        size: file.size,
+        duration: analysis.duration,
+        createdAt: new Date().toISOString(),
+        status: finalResult.sections.length ? "Selesai" : "Gagal",
+      };
+      setHistory((items) => [song, ...items].slice(0, 50));
+      setStep(steps.length - 1);
+      setProgress(100);
+      if (finalResult.sections.length) toast.success("Not angka berhasil dibuat.");
+      else toast.error("Analisis gagal: melodi tidak terdeteksi pada audio ini.");
+    } catch (error) {
+      console.error(error);
+      toast.error(error instanceof Error ? error.message : "Analisis lagu gagal.");
+    } finally {
+      setAnalyzing(false);
     }
-    const duration = await readDuration(file);
-    const song: Song = {
-      id: crypto.randomUUID(),
-      name: file.name,
-      size: file.size,
-      duration,
-      createdAt: new Date().toISOString(),
-      status: "Selesai",
-    };
-    setHistory((items) => [song, ...items].slice(0, 50));
-    setAnalyzing(false);
-    setProgress(100);
-    setStep(steps.length - 1);
-    toast.success("Analisis selesai.");
   }
 
   const recent = useMemo(() => history.slice(0, 3), [history]);
@@ -173,6 +231,7 @@ function Index() {
               {file && <div className="file-actions"><button className="ghost" onClick={() => setFile(null)}><X size={16}/> Ganti</button><button className="primary" disabled={analyzing} onClick={analyze}>{analyzing ? <><Loader2 className="spin" size={17}/> Menganalisis...</> : <><Zap size={17}/> Analisis Lagu</>}</button></div>}
             </div>
             {analyzing && <div className="progress-card"><div className="progress-top"><div><b>{steps[step]}</b><span>Proses analisis sedang berjalan</span></div><strong>{progress}%</strong></div><div className="progress"><i style={{width: `${progress}%`}}/></div><div className="steps">{steps.slice(0, 7).map((s, i) => <span className={i < step ? "done" : i === step ? "current" : ""} key={s}>{i < step ? <Check size={12}/> : i + 1} {s}</span>)}</div></div>}
+            {result && <ResultPanel result={result}/>}
             <div className="section-head recent-head"><div><h3>Analisis terbaru</h3><p>Hasil yang baru saja diproses</p></div><button className="text-button" onClick={() => setPage("history")}>Lihat semua <ChevronRight size={15}/></button></div>
             {recent.length === 0 ? <div className="empty-small"><Music2 size={22}/><span>Belum ada analisis. Upload lagu pertama Anda.</span></div> : <div className="recent-list">{recent.map((s) => <div className="song-row" key={s.id}><div className="song-icon"><Music2 size={19}/></div><div className="song-name"><b>{s.name}</b><span>{new Date(s.createdAt).toLocaleString("id-ID")} · {formatBytes(s.size)}</span></div><span className="success-badge"><Check size={13}/> {s.status}</span><button className="icon-btn" onClick={() => setHistory((items) => items.filter((x) => x.id !== s.id))}><Trash2 size={16}/></button></div>)}</div>}
           </section>
@@ -294,4 +353,63 @@ function ConfigModal({ config, onClose, onSaved }: { config: Config; onClose: ()
     <div className={config.storageReady ? "modal-status ok" : "modal-status"}>{config.storageReady ? <><Check size={16}/> Penyimpanan online aktif</> : <><AlertCircle size={16}/> Penyimpanan online belum siap</>}</div>
     <div className="modal-actions"><button className="ghost" onClick={onClose}>Batal</button><button className="primary" onClick={save} disabled={loading}>{loading ? <Loader2 className="spin" size={16}/> : <Check size={16}/>} Simpan Online</button></div>
   </div></div>;
+}
+
+function resultToText(result: AnalysisResult) {
+  const header = [
+    `Judul: ${result.fileName}`,
+    `Durasi: ${formatDuration(result.duration)}`,
+    `Nada dasar: ${result.key}`,
+    `BPM: ${result.bpm}`,
+    `Birama: ${result.timeSignature}`,
+    `Range nada: ${result.rangeLow} – ${result.rangeHigh}`,
+    `Tingkat keyakinan: ${result.confidence}%`,
+    "",
+  ].join("\n");
+  const body = result.sections
+    .map((s) => `[${s.section}] (keyakinan ${s.confidence}%)\n${s.notation}`)
+    .join("\n\n");
+  const warn = result.warnings.length ? `\n\nCatatan:\n- ${result.warnings.join("\n- ")}` : "";
+  return `${header}${body}${warn}\n\nHasil otomatis — mohon diperiksa manual, tidak dijamin 100% akurat.`;
+}
+
+function ResultPanel({ result }: { result: AnalysisResult }) {
+  const text = resultToText(result);
+  return (
+    <div className="result-card">
+      <div className="section-head"><div><h3>Hasil Analisis Lagu</h3><p>Not angka dihitung dari deteksi pitch audio {result.aiUsed ? "· penamaan bagian dirapikan AI" : ""}</p></div></div>
+      <div className="result-meta">
+        <div><small>Nama file</small><b>{result.fileName}</b></div>
+        <div><small>Durasi</small><b>{formatDuration(result.duration)}</b></div>
+        <div><small>Nada dasar</small><b>{result.key}</b></div>
+        <div><small>BPM</small><b>{result.bpm}</b></div>
+        <div><small>Birama</small><b>{result.timeSignature}</b></div>
+        <div><small>Range nada</small><b>{result.rangeLow} – {result.rangeHigh}</b></div>
+        <div><small>Keyakinan</small><b>{result.confidence}%</b></div>
+      </div>
+      {result.warnings.length > 0 && (
+        <div className="notice warn"><AlertCircle size={17}/><span>{result.warnings.join(" ")}</span></div>
+      )}
+      <div className="notation-list">
+        {result.sections.map((s, i) => (
+          <div className="notation-block" key={`${s.section}-${i}`}>
+            <div className="notation-head"><b>{s.section}</b><span>keyakinan {s.confidence}%</span></div>
+            <pre>{s.notation}</pre>
+          </div>
+        ))}
+      </div>
+      <div className="result-actions">
+        <button className="ghost" onClick={() => { void navigator.clipboard.writeText(text); toast.success("Hasil disalin."); }}>Salin</button>
+        <button className="primary" onClick={() => {
+          const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${result.fileName.replace(/\.[^.]+$/, "")}-not-angka.txt`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }}>Download TXT</button>
+      </div>
+    </div>
+  );
 }

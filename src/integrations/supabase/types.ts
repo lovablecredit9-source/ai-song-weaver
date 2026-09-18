@@ -14,7 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      ai_router_config: {
+        Row: {
+          api_key: string | null
+          base_url: string
+          id: string
+          model: string
+          models: Json
+          updated_at: string
+        }
+        Insert: {
+          api_key?: string | null
+          base_url?: string
+          id?: string
+          model?: string
+          models?: Json
+          updated_at?: string
+        }
+        Update: {
+          api_key?: string | null
+          base_url?: string
+          id?: string
+          model?: string
+          models?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

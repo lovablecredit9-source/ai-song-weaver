@@ -9,7 +9,7 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/")({ component: Index });
 
-type Config = { baseUrl: string; apiKey: string; model: string; connected: boolean };
+type Config = { baseUrl: string; apiKey: string; model: string; connected: boolean; supabaseUrl: string; supabaseAnonKey: string; supabaseConnected: boolean; models: string[] };
 type Song = { id: string; name: string; size: number; duration: number; createdAt: string; status: string; key?: string; bpm?: number; notation?: string; lyrics?: string };
 
 const ACCEPT = ".mp3,.wav,.m4a,.aac,.flac,.ogg,audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/flac,audio/ogg";
@@ -29,8 +29,8 @@ function formatDuration(s: number) {
 function Index() {
   const [page, setPage] = useState<"dashboard" | "history" | "settings">("dashboard");
   const [config, setConfig] = useState<Config>(() => {
-    try { return JSON.parse(localStorage.getItem("songweaver-config") || '{"baseUrl":"","apiKey":"","model":"","connected":false}'); }
-    catch { return { baseUrl: "", apiKey: "", model: "", connected: false }; }
+    try { return JSON.parse(localStorage.getItem("songweaver-config") || '{"baseUrl":"","apiKey":"","model":"","connected":false,"supabaseUrl":"","supabaseAnonKey":"","supabaseConnected":false,"models":[]}'); }
+    catch { return { baseUrl: "", apiKey: "", model: "", connected: false, supabaseUrl: "", supabaseAnonKey: "", supabaseConnected: false, models: [] }; }
   });
   const [file, setFile] = useState<File | null>(null);
   const [drag, setDrag] = useState(false);
@@ -90,9 +90,8 @@ function Index() {
   }
 
   function saveConfig(next: Config) {
-    if (!next.baseUrl.trim() || !next.apiKey.trim() || !next.model.trim()) {
-      toast.error("Base URL, API Key, dan Model wajib diisi."); return;
-    }
+    if (!next.baseUrl.trim() || !next.apiKey.trim()) { toast.error("Base URL dan API Key wajib diisi."); return; }
+    if (!next.model.trim()) { toast.error("Pilih model dari daftar model yang tersedia."); return; }
     setConfig({ ...next, connected: true }); setShowConfig(false);
     toast.success("Konfigurasi AI berhasil disimpan.");
   }
@@ -172,12 +171,30 @@ function HistoryPage({history,setHistory}:{history:Song[];setHistory:React.Dispa
 
 function SettingsPage({config,onSave}:{config:Config;onSave:(c:Config)=>void}) {
   const [draft,setDraft]=useState(config);
-  return <section className="content page-content"><div className="settings-card"><div className="settings-icon"><Settings2/></div><h2>AI Router</h2><p>Masukkan endpoint dan credential AI yang ingin digunakan untuk memproses hasil analisis.</p><label>API Base URL<input value={draft.baseUrl} onChange={e=>setDraft({...draft,baseUrl:e.target.value})} placeholder="https://example.com/v1"/></label><label>API Key<input type="password" value={draft.apiKey} onChange={e=>setDraft({...draft,apiKey:e.target.value})} placeholder="Masukkan API Key"/></label><label>Model<input value={draft.model} onChange={e=>setDraft({...draft,model:e.target.value})} placeholder="Nama model"/></label><div className="notice"><ShieldCheck size={18}/><span>Credential tidak ditampilkan di halaman publik. Untuk produksi, panggil AI Router melalui backend/proxy agar API key tidak terekspos ke browser.</span></div><button className="primary wide" onClick={()=>onSave(draft)}><Check size={17}/> Simpan & Hubungkan</button></div></section>;
+  const [loadingModels,setLoadingModels]=useState(false);
+  const [testingSb,setTestingSb]=useState(false);
+  async function loadModels(){if(!draft.baseUrl||!draft.apiKey){toast.error("Isi Base URL dan API Key dulu.");return;}setLoadingModels(true);try{const r=await fetch(draft.baseUrl.replace(/\/$/,"")+"/models",{headers:{Authorization:`Bearer ${draft.apiKey}`}});if(!r.ok)throw new Error();const j=await r.json();const models=(j.data||j.models||[]).map((m:any)=>typeof m==="string"?m:m.id).filter(Boolean);if(!models.length)throw new Error();setDraft({...draft,models,model:models.includes(draft.model)?draft.model:models[0]});toast.success(`${models.length} model tersedia.`);}catch{toast.error("Daftar model gagal dimuat. Router harus menyediakan endpoint /models.");}finally{setLoadingModels(false);}}
+  async function testSupabase(){if(!draft.supabaseUrl||!draft.supabaseAnonKey){toast.error("Isi Supabase URL dan Anon Key.");return;}setTestingSb(true);try{const r=await fetch(draft.supabaseUrl.replace(/\/$/,"")+"/rest/v1/",{headers:{apikey:draft.supabaseAnonKey,Authorization:`Bearer ${draft.supabaseAnonKey}`}});if(!r.ok)throw new Error();setDraft({...draft,supabaseConnected:true});toast.success("Supabase berhasil terhubung.");}catch{setDraft({...draft,supabaseConnected:false});toast.error("Supabase gagal terhubung.");}finally{setTestingSb(false);}}
+  return <section className="content page-content"><div className="settings-card"><div className="settings-icon"><Settings2/></div><h2>AI Router + Supabase</h2><p>Model diambil otomatis dari router. Supabase digunakan untuk penyimpanan data aplikasi.</p>
+  <label>API Base URL<input value={draft.baseUrl} onChange={e=>setDraft({...draft,baseUrl:e.target.value,models:[],connected:false})} placeholder="https://example.com/v1"/></label>
+  <label>API Key<input type="password" value={draft.apiKey} onChange={e=>setDraft({...draft,apiKey:e.target.value,models:[],connected:false})} placeholder="Masukkan API Key"/></label>
+  <div className="model-line"><label>Model tersedia<select value={draft.model} onChange={e=>setDraft({...draft,model:e.target.value})} disabled={!draft.models.length}><option value="">{draft.models.length?"Pilih model":"Muat model terlebih dahulu"}</option>{draft.models.map(m=><option key={m} value={m}>{m}</option>)}</select></label><button className="ghost model-btn" onClick={loadModels} disabled={loadingModels}>{loadingModels?<Loader2 className="spin" size={15}/>:<Activity size={15}/>} Muat Model</button></div>
+  <div className="notice"><ShieldCheck size={18}/><span>Daftar model diambil langsung dari endpoint <b>/models</b> router. Tidak perlu mengetik nama model manual.</span></div>
+  <div className="divider-title"><span>Supabase</span><i/></div>
+  <label>Supabase Project URL<input value={draft.supabaseUrl} onChange={e=>setDraft({...draft,supabaseUrl:e.target.value,supabaseConnected:false})} placeholder="https://xxxx.supabase.co"/></label>
+  <label>Supabase Anon Key<input type="password" value={draft.supabaseAnonKey} onChange={e=>setDraft({...draft,supabaseAnonKey:e.target.value,supabaseConnected:false})} placeholder="Anon Key"/></label>
+  <div className={draft.supabaseConnected?"modal-status ok":"modal-status"}>{draft.supabaseConnected?<><Check size={16}/> Supabase terhubung</>:<><AlertCircle size={16}/> Supabase belum terhubung</>}</div>
+  <div className="settings-actions"><button className="ghost" onClick={testSupabase} disabled={testingSb}>{testingSb?<Loader2 className="spin" size={16}/>:<ShieldCheck size={16}/>} Test Supabase</button><button className="primary" onClick={()=>onSave(draft)}><Check size={17}/> Simpan & Hubungkan</button></div>
+  </div></section>;
 }
 
 function ConfigModal({config,onClose,onSave}:{config:Config;onClose:()=>void;onSave:(c:Config)=>void}) {
   const [d,setD]=useState(config);
   const [testing,setTesting]=useState(false);
-  async function test(){ if(!d.baseUrl||!d.apiKey||!d.model){toast.error("Lengkapi semua field terlebih dahulu.");return;} setTesting(true); try { const r=await fetch(d.baseUrl.replace(/\/$/,"")+"/models",{headers:{Authorization:`Bearer ${d.apiKey}`}}); if(!r.ok) throw new Error(); toast.success("Koneksi AI berhasil."); } catch { toast.error("Test koneksi gagal. Pastikan Base URL, API Key, dan Model benar."); } finally {setTesting(false);} }
-  return <div className="modal-backdrop" onMouseDown={e=>e.currentTarget===e.target&&onClose()}><div className="modal"><div className="modal-head"><div><span className="pill"><KeyRound size={13}/> AI ROUTER</span><h2>Konfigurasi AI</h2></div><button className="icon-btn" onClick={onClose}><X/></button></div><label>API Base URL<input value={d.baseUrl} onChange={e=>setD({...d,baseUrl:e.target.value})} placeholder="https://example.com/v1"/></label><label>API Key<input type="password" value={d.apiKey} onChange={e=>setD({...d,apiKey:e.target.value})} placeholder="Masukkan API Key"/></label><label>Model<input value={d.model} onChange={e=>setD({...d,model:e.target.value})} placeholder="contoh: model-name"/></label><div className={d.connected?"modal-status ok":"modal-status"}>{d.connected?<><Check size={16}/> Konfigurasi tersimpan</>:<><AlertCircle size={16}/> Belum terhubung</>}</div><div className="modal-actions"><button className="ghost" onClick={test} disabled={testing}>{testing?<Loader2 className="spin" size={16}/>:<Activity size={16}/>} Test Koneksi</button><button className="primary" onClick={()=>onSave(d)}><Check size={16}/> Simpan</button></div></div></div>;
+  const [loadingModels,setLoadingModels]=useState(false);
+  const [testingSb,setTestingSb]=useState(false);
+  async function loadModels(){if(!d.baseUrl||!d.apiKey){toast.error("Isi Base URL dan API Key.");return;}setLoadingModels(true);try{const r=await fetch(d.baseUrl.replace(/\/$/,"")+"/models",{headers:{Authorization:`Bearer ${d.apiKey}`}});if(!r.ok)throw new Error();const j=await r.json();const models=(j.data||j.models||[]).map((m:any)=>typeof m==="string"?m:m.id).filter(Boolean);if(!models.length)throw new Error();setD({...d,models,model:models.includes(d.model)?d.model:models[0]});toast.success(`${models.length} model tersedia.`);}catch{toast.error("Daftar model gagal dimuat. Router harus menyediakan endpoint /models.");}finally{setLoadingModels(false);}}
+  async function test(){if(!d.baseUrl||!d.apiKey){toast.error("Isi Base URL dan API Key.");return;}await loadModels();}
+  async function testSupabase(){if(!d.supabaseUrl||!d.supabaseAnonKey){toast.error("Isi Supabase URL dan Anon Key.");return;}setTestingSb(true);try{const r=await fetch(d.supabaseUrl.replace(/\/$/,"")+"/rest/v1/",{headers:{apikey:d.supabaseAnonKey,Authorization:`Bearer ${d.supabaseAnonKey}`}});if(!r.ok)throw new Error();setD({...d,supabaseConnected:true});toast.success("Supabase berhasil terhubung.");}catch{setD({...d,supabaseConnected:false});toast.error("Supabase gagal terhubung.");}finally{setTestingSb(false);}}
+  return <div className="modal-backdrop" onMouseDown={e=>e.currentTarget===e.target&&onClose()}><div className="modal"><div className="modal-head"><div><span className="pill"><KeyRound size={13}/> AI ROUTER</span><h2>Konfigurasi AI</h2></div><button className="icon-btn" onClick={onClose}><X/></button></div><label>API Base URL<input value={d.baseUrl} onChange={e=>setD({...d,baseUrl:e.target.value,models:[],connected:false})} placeholder="https://example.com/v1"/></label><label>API Key<input type="password" value={d.apiKey} onChange={e=>setD({...d,apiKey:e.target.value,models:[],connected:false})} placeholder="Masukkan API Key"/></label><div className="model-line"><label>Model tersedia<select value={d.model} onChange={e=>setD({...d,model:e.target.value})} disabled={!d.models.length}><option value="">{d.models.length?"Pilih model":"Klik Muat Model"}</option>{d.models.map(m=><option key={m} value={m}>{m}</option>)}</select></label><button className="ghost model-btn" onClick={loadModels} disabled={loadingModels}>{loadingModels?<Loader2 className="spin" size={15}/>:<Activity size={15}/>} Muat Model</button></div><div className={d.connected?"modal-status ok":"modal-status"}>{d.connected?<><Check size={16}/> Router terhubung</>:<><AlertCircle size={16}/> Router belum terhubung</>}</div><div className="divider-title"><span>Supabase</span><i/></div><label>Supabase Project URL<input value={d.supabaseUrl} onChange={e=>setD({...d,supabaseUrl:e.target.value,supabaseConnected:false})} placeholder="https://xxxx.supabase.co"/></label><label>Supabase Anon Key<input type="password" value={d.supabaseAnonKey} onChange={e=>setD({...d,supabaseAnonKey:e.target.value,supabaseConnected:false})} placeholder="Anon Key"/></label><div className={d.supabaseConnected?"modal-status ok":"modal-status"}>{d.supabaseConnected?<><Check size={16}/> Supabase terhubung</>:<><AlertCircle size={16}/> Supabase belum terhubung</>}</div><div className="modal-actions"><button className="ghost" onClick={test} disabled={testing||loadingModels}>{testing?<Loader2 className="spin" size={16}/>:<Activity size={16}/>} Muat Model</button><button className="ghost" onClick={testSupabase} disabled={testingSb}>{testingSb?<Loader2 className="spin" size={16}/>:<ShieldCheck size={16}/>} Test Supabase</button><button className="primary" onClick={()=>onSave(d)}><Check size={16}/> Simpan</button></div></div></div>;
 }

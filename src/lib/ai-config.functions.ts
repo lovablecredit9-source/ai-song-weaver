@@ -97,7 +97,7 @@ export const saveAiConfig = createServerFn({ method: "POST" })
 
     // Uji koneksi sebelum menyimpan.
     const models = await fetchModels(baseUrl, apiKey);
-    const model = data.model && models.includes(data.model) ? data.model : models[0];
+    const model = data.model && models.includes(data.model) ? data.model : (models[0] ?? "");
 
     const { data: saved, error } = await supabaseAdmin
       .from("ai_router_config")

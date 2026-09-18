@@ -209,7 +209,7 @@ function SettingsPage({ config, onSave }: { config: Config; onSave: (next: Confi
     setLoading(true);
     try {
       const result = await loadRouterModels({ data: { baseUrl: draft.baseUrl, apiKey: draft.apiKey } });
-      setDraft((current) => ({ ...current, models: result.models, model: result.models.includes(current.model) ? current.model : result.models[0] }));
+      setDraft((current) => ({ ...current, models: result.models, model: result.models.includes(current.model) ? current.model : (result.models[0] ?? "") }));
       toast.success(`${result.models.length} model tersedia.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Model gagal dimuat.");
@@ -262,7 +262,7 @@ function ConfigModal({ config, onClose, onSaved }: { config: Config; onClose: ()
     setLoading(true);
     try {
       const result = await loadRouterModels({ data: { baseUrl: draft.baseUrl, apiKey: draft.apiKey } });
-      setDraft((current) => ({ ...current, models: result.models, model: result.models.includes(current.model) ? current.model : result.models[0] }));
+      setDraft((current) => ({ ...current, models: result.models, model: result.models.includes(current.model) ? current.model : (result.models[0] ?? "") }));
       toast.success(`${result.models.length} model tersedia.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Model gagal dimuat.");

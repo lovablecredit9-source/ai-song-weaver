@@ -354,3 +354,62 @@ function ConfigModal({ config, onClose, onSaved }: { config: Config; onClose: ()
     <div className="modal-actions"><button className="ghost" onClick={onClose}>Batal</button><button className="primary" onClick={save} disabled={loading}>{loading ? <Loader2 className="spin" size={16}/> : <Check size={16}/>} Simpan Online</button></div>
   </div></div>;
 }
+
+function resultToText(result: AnalysisResult) {
+  const header = [
+    `Judul: ${result.fileName}`,
+    `Durasi: ${formatDuration(result.duration)}`,
+    `Nada dasar: ${result.key}`,
+    `BPM: ${result.bpm}`,
+    `Birama: ${result.timeSignature}`,
+    `Range nada: ${result.rangeLow} – ${result.rangeHigh}`,
+    `Tingkat keyakinan: ${result.confidence}%`,
+    "",
+  ].join("\n");
+  const body = result.sections
+    .map((s) => `[${s.section}] (keyakinan ${s.confidence}%)\n${s.notation}`)
+    .join("\n\n");
+  const warn = result.warnings.length ? `\n\nCatatan:\n- ${result.warnings.join("\n- ")}` : "";
+  return `${header}${body}${warn}\n\nHasil otomatis — mohon diperiksa manual, tidak dijamin 100% akurat.`;
+}
+
+function ResultPanel({ result }: { result: AnalysisResult }) {
+  const text = resultToText(result);
+  return (
+    <div className="result-card">
+      <div className="section-head"><div><h3>Hasil Analisis Lagu</h3><p>Not angka dihitung dari deteksi pitch audio {result.aiUsed ? "· penamaan bagian dirapikan AI" : ""}</p></div></div>
+      <div className="result-meta">
+        <div><small>Nama file</small><b>{result.fileName}</b></div>
+        <div><small>Durasi</small><b>{formatDuration(result.duration)}</b></div>
+        <div><small>Nada dasar</small><b>{result.key}</b></div>
+        <div><small>BPM</small><b>{result.bpm}</b></div>
+        <div><small>Birama</small><b>{result.timeSignature}</b></div>
+        <div><small>Range nada</small><b>{result.rangeLow} – {result.rangeHigh}</b></div>
+        <div><small>Keyakinan</small><b>{result.confidence}%</b></div>
+      </div>
+      {result.warnings.length > 0 && (
+        <div className="notice warn"><AlertCircle size={17}/><span>{result.warnings.join(" ")}</span></div>
+      )}
+      <div className="notation-list">
+        {result.sections.map((s, i) => (
+          <div className="notation-block" key={`${s.section}-${i}`}>
+            <div className="notation-head"><b>{s.section}</b><span>keyakinan {s.confidence}%</span></div>
+            <pre>{s.notation}</pre>
+          </div>
+        ))}
+      </div>
+      <div className="result-actions">
+        <button className="ghost" onClick={() => { void navigator.clipboard.writeText(text); toast.success("Hasil disalin."); }}>Salin</button>
+        <button className="primary" onClick={() => {
+          const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${result.fileName.replace(/\.[^.]+$/, "")}-not-angka.txt`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }}>Download TXT</button>
+      </div>
+    </div>
+  );
+}

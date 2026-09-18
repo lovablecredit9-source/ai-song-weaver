@@ -1,3 +1,6 @@
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
+
 type RouterConfig = {
   configured: boolean;
   baseUrl: string;
@@ -7,86 +10,121 @@ type RouterConfig = {
   updatedAt?: string;
 };
 
-type SaveInput = {
-  baseUrl: string;
-  apiKey?: string;
-  model?: string;
-};
+const ROW_ID = "default";
 
-// Supabase publishable/anon key memang aman untuk berada di client.
-// Service-role key TIDAK pernah dimasukkan ke frontend; Edge Function yang menyimpan data.
-const SUPABASE_FUNCTION_URL =
-  "https://ochqpzpsfqytemrgsdir.supabase.co/functions/v1/ai-router-config";
+async function getAdmin() {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  return supabaseAdmin;
+}
 
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9jaHFwenBzZnF5dGVtcmdzZGlyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNjAxMDIsImV4cCI6MjEwNDczNjEwMn0.anRItCJpJtI9dta-A9KfGp9tEvjQB1wmGMNP1AGFVAA";
-
-async function callConfig<T>(
-  action: string,
-  init: RequestInit = {},
-): Promise<T> {
-  const headers = new Headers(init.headers);
-  headers.set("Authorization", `Bearer ${SUPABASE_ANON_KEY}`);
-  headers.set("apikey", SUPABASE_ANON_KEY);
-  headers.set("Accept", "application/json");
-  if (init.body) headers.set("Content-Type", "application/json");
-
-  const response = await fetch(
-    `${SUPABASE_FUNCTION_URL}?action=${encodeURIComponent(action)}`,
-    {
-      ...init,
-      headers,
-      cache: "no-store",
-    },
-  );
-
-  const body = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(
-      typeof body?.error === "string"
-        ? body.error
-        : `Server Supabase HTTP ${response.status}`,
-    );
+function toConfig(row: any | null, storageReady: boolean): RouterConfig {
+  if (!row) {
+    return { configured: false, baseUrl: "", model: "", models: [], storageReady };
   }
-
-  return body as T;
+  return {
+    configured: Boolean(row.base_url && row.api_key),
+    baseUrl: row.base_url ?? "",
+    model: row.model ?? "",
+    models: Array.isArray(row.models) ? (row.models as string[]) : [],
+    storageReady,
+    updatedAt: row.updated_at ?? undefined,
+  };
 }
 
-export async function getAiConfig(): Promise<RouterConfig> {
-  return callConfig<RouterConfig>("get");
+function normalizeBaseUrl(url: string) {
+  return url.trim().replace(/\/+$/, "");
 }
 
-export async function loadRouterModels(data: {
-  baseUrl: string;
-  apiKey: string;
-}) {
-  return callConfig<{ models: string[] }>("models", {
-    method: "POST",
-    body: JSON.stringify(data),
+async function fetchModels(baseUrl: string, apiKey: string) {
+  const response = await fetch(`${normalizeBaseUrl(baseUrl)}/models`, {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
   });
+  const body: any = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body?.error?.message || `API router menolak permintaan (HTTP ${response.status}).`);
+  }
+  const list: string[] = (body?.data ?? body?.models ?? [])
+    .map((item: any) => (typeof item === "string" ? item : item?.id))
+    .filter((id: unknown): id is string => typeof id === "string" && id.length > 0);
+  if (!list.length) throw new Error("Daftar model kosong dari API router.");
+  return list.sort();
 }
 
-export async function saveAiConfig(data: SaveInput): Promise<RouterConfig> {
-  return callConfig<RouterConfig>("save", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-}
-
-export async function testOnlineStorage(): Promise<{
-  ok: boolean;
-  message: string;
-}> {
+export const getAiConfig = createServerFn({ method: "GET" }).handler(async (): Promise<RouterConfig> => {
   try {
-    return await callConfig<{ ok: boolean; message: string }>("test");
+    const supabaseAdmin = await getAdmin();
+    const { data, error } = await supabaseAdmin
+      .from("ai_router_config")
+      .select("*")
+      .eq("id", ROW_ID)
+      .maybeSingle();
+    if (error) throw error;
+    return toConfig(data, true);
+  } catch (error) {
+    console.error("getAiConfig", error);
+    return { configured: false, baseUrl: "", model: "", models: [], storageReady: false };
+  }
+});
+
+export const loadRouterModels = createServerFn({ method: "POST" })
+  .inputValidator((data) => z.object({ baseUrl: z.string().min(1), apiKey: z.string().min(1) }).parse(data))
+  .handler(async ({ data }) => {
+    const models = await fetchModels(data.baseUrl, data.apiKey);
+    return { models };
+  });
+
+export const saveAiConfig = createServerFn({ method: "POST" })
+  .inputValidator((data) =>
+    z
+      .object({
+        baseUrl: z.string().min(1),
+        apiKey: z.string().optional(),
+        model: z.string().optional(),
+      })
+      .parse(data),
+  )
+  .handler(async ({ data }): Promise<RouterConfig> => {
+    const supabaseAdmin = await getAdmin();
+    const { data: existing } = await supabaseAdmin
+      .from("ai_router_config")
+      .select("*")
+      .eq("id", ROW_ID)
+      .maybeSingle();
+
+    const baseUrl = normalizeBaseUrl(data.baseUrl);
+    const apiKey = data.apiKey?.trim() || (existing as any)?.api_key || null;
+    if (!apiKey) throw new Error("API Key wajib diisi untuk menghubungkan AI Router.");
+
+    // Uji koneksi sebelum menyimpan.
+    const models = await fetchModels(baseUrl, apiKey);
+    const model = data.model && models.includes(data.model) ? data.model : models[0];
+
+    const { data: saved, error } = await supabaseAdmin
+      .from("ai_router_config")
+      .upsert({
+        id: ROW_ID,
+        base_url: baseUrl,
+        api_key: apiKey,
+        model,
+        models,
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return toConfig(saved, true);
+  });
+
+export const testOnlineStorage = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const supabaseAdmin = await getAdmin();
+    const { error } = await supabaseAdmin.from("ai_router_config").select("id").limit(1);
+    if (error) throw new Error(error.message);
+    return { ok: true, message: "Penyimpanan online aktif." };
   } catch (error) {
     return {
       ok: false,
-      message:
-        error instanceof Error
-          ? error.message
-          : "Penyimpanan online gagal dihubungi.",
+      message: error instanceof Error ? error.message : "Penyimpanan online gagal dihubungi.",
     };
   }
-}
+});

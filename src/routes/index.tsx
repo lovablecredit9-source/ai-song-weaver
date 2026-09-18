@@ -7,6 +7,22 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getAiConfig, loadRouterModels, saveAiConfig, testOnlineStorage } from "../lib/ai-config.functions";
+import { analyzeAudio } from "../lib/audio-analysis";
+import { refineNotation } from "../lib/song-ai.functions";
+
+type AnalysisResult = {
+  fileName: string;
+  duration: number;
+  bpm: number;
+  key: string;
+  timeSignature: string;
+  rangeLow: string;
+  rangeHigh: string;
+  confidence: number;
+  sections: { section: string; notation: string; confidence: number }[];
+  warnings: string[];
+  aiUsed: boolean;
+};
 
 export const Route = createFileRoute("/")({ component: Index });
 

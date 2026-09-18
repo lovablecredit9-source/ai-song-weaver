@@ -105,31 +105,72 @@ function Index() {
 
   async function analyze() {
     if (!file) return;
-    if (!config.configured) {
-      setShowConfig(true);
-      toast.error("Konfigurasi AI belum tersedia.");
-      return;
-    }
+    setResult(null);
     setAnalyzing(true);
-    for (let i = 0; i < steps.length; i++) {
-      setStep(i);
-      setProgress(Math.round((i / (steps.length - 1)) * 100));
-      await new Promise((resolve) => setTimeout(resolve, i === 2 || i === 6 ? 900 : 450));
+    setStep(0);
+    setProgress(0);
+    try {
+      const analysis = await analyzeAudio(file, (index) => {
+        setStep(index);
+        setProgress(Math.round((index / (steps.length - 1)) * 100));
+      });
+
+      setStep(7);
+      setProgress(80);
+      const refined = await refineNotation({
+        data: {
+          fileName: file.name,
+          duration: analysis.duration,
+          bpm: analysis.bpm,
+          key: analysis.key,
+          timeSignature: analysis.timeSignature,
+          rangeLow: analysis.rangeLow,
+          rangeHigh: analysis.rangeHigh,
+          confidence: analysis.confidence,
+          sections: analysis.sections.slice(0, 24).map((s) => ({
+            section: s.section,
+            notation: s.notation,
+            confidence: s.confidence,
+          })),
+        },
+      });
+
+      setStep(8);
+      setProgress(95);
+      const finalResult: AnalysisResult = {
+        fileName: file.name,
+        duration: analysis.duration,
+        bpm: analysis.bpm,
+        key: analysis.key,
+        timeSignature: analysis.timeSignature,
+        rangeLow: analysis.rangeLow,
+        rangeHigh: analysis.rangeHigh,
+        confidence: analysis.confidence,
+        sections: refined.number_notation,
+        warnings: [...analysis.warnings, ...refined.warnings],
+        aiUsed: refined.aiUsed,
+      };
+      setResult(finalResult);
+
+      const song: Song = {
+        id: crypto.randomUUID(),
+        name: file.name,
+        size: file.size,
+        duration: analysis.duration,
+        createdAt: new Date().toISOString(),
+        status: finalResult.sections.length ? "Selesai" : "Gagal",
+      };
+      setHistory((items) => [song, ...items].slice(0, 50));
+      setStep(steps.length - 1);
+      setProgress(100);
+      if (finalResult.sections.length) toast.success("Not angka berhasil dibuat.");
+      else toast.error("Analisis gagal: melodi tidak terdeteksi pada audio ini.");
+    } catch (error) {
+      console.error(error);
+      toast.error(error instanceof Error ? error.message : "Analisis lagu gagal.");
+    } finally {
+      setAnalyzing(false);
     }
-    const duration = await readDuration(file);
-    const song: Song = {
-      id: crypto.randomUUID(),
-      name: file.name,
-      size: file.size,
-      duration,
-      createdAt: new Date().toISOString(),
-      status: "Selesai",
-    };
-    setHistory((items) => [song, ...items].slice(0, 50));
-    setAnalyzing(false);
-    setProgress(100);
-    setStep(steps.length - 1);
-    toast.success("Analisis selesai.");
   }
 
   const recent = useMemo(() => history.slice(0, 3), [history]);

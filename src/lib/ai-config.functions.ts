@@ -64,11 +64,11 @@ export const getAiConfig = createServerFn({ method: "GET" }).handler(async (): P
   }
 
   try {
-    const response = await supabaseRequest("ai_router_config?select=base_url,model,allowed_models,updated_at&id=eq.1&limit=1");
+    const response = await supabaseRequest("ai_settings?select=base_url,model,allowed_models,updated_at&id=eq.1&limit=1");
     const rows = (await response.json()) as Array<{
       base_url?: string;
       model?: string;
-      models?: unknown;
+      allowed_models?: unknown;
       updated_at?: string;
     }>;
     const row = rows[0];
@@ -77,7 +77,7 @@ export const getAiConfig = createServerFn({ method: "GET" }).handler(async (): P
       configured: Boolean(row.base_url && row.model),
       baseUrl: row.base_url || "",
       model: row.model || "",
-      models: Array.isArray(row.models) ? row.models.filter((m): m is string => typeof m === "string") : [],
+      models: Array.isArray(row.allowed_models) ? row.allowed_models.filter((m): m is string => typeof m === "string") : [],
       storageReady: true,
       updatedAt: row.updated_at,
     };
@@ -102,7 +102,7 @@ export const saveAiConfig = createServerFn({ method: "POST" })
     const baseUrl = data.baseUrl.trim().replace(/\/$/, "");
     if (!baseUrl) throw new Error("Base URL wajib diisi.");
 
-    const existing = await supabaseRequest("ai_router_config?select=api_key,model&id=eq.1&limit=1");
+    const existing = await supabaseRequest("ai_settings?select=api_key,model&id=eq.1&limit=1");
     const existingRows = (await existing.json()) as Array<{ api_key?: string; model?: string }>;
     const previousKey = existingRows[0]?.api_key?.trim() || "";
     const apiKey = data.apiKey?.trim() || previousKey;
@@ -111,7 +111,7 @@ export const saveAiConfig = createServerFn({ method: "POST" })
     const models = await fetchModels(baseUrl, apiKey);
     const model = data.model?.trim() && models.includes(data.model.trim()) ? data.model.trim() : models[0];
 
-    await supabaseRequest("ai_router_config?on_conflict=id", {
+    await supabaseRequest("ai_settings?on_conflict=id", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify({
@@ -137,10 +137,10 @@ export const testOnlineStorage = createServerFn({ method: "GET" }).handler(async
   const { url, key } = supabaseEnv();
   if (!url || !key) return { ok: false, message: "Supabase server belum dikonfigurasi." };
   try {
-    await supabaseRequest("ai_router_config?select=id&limit=1");
+    await supabaseRequest("ai_settings?select=id&limit=1");
     return { ok: true, message: "Penyimpanan online aktif." };
   } catch (error) {
     console.error(error);
-    return { ok: false, message: "Supabase belum siap. Pastikan tabel ai_router_config sudah dibuat." };
+    return { ok: false, message: "Supabase belum siap. Pastikan tabel ai_settings sudah dibuat." };
   }
 });
